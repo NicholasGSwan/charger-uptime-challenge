@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"cmp"
 	"fmt"
+	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -15,6 +16,9 @@ type Station struct {
 	stationId  uint
 	chargerIds []uint
 	uptime     [][2]uint
+	min        uint
+	max        uint
+	minSet     bool
 }
 
 const (
@@ -46,10 +50,9 @@ func sortStation(a, b Station) int {
 	return cmp.Compare(a.stationId, b.stationId)
 }
 func UptimeReport(filename string) {
-	fmt.Println("Hello, world")
 	fs, err := os.Open(filename)
 	if err == nil {
-		fmt.Println("File opened")
+		// fmt.Println("File opened")
 	}
 	reader := bufio.NewReader(fs)
 	// start read of file line by line
@@ -62,15 +65,14 @@ func UptimeReport(filename string) {
 		for line != availReportHeader && check(err) {
 
 			if line != stationsHeader && len(line) != 0 {
-				fmt.Println(line)
+				// fmt.Println(line)
 				fields := strings.Fields(line)
 				stat := Station{}
 				var statId uint
 				for i, field := range fields {
 					if i == 0 {
-						stat.stationId = parseuint(field)
 						statId = parseuint(field)
-
+						stat.stationId = statId
 					} else {
 						chargeMap[parseuint(field)] = statId
 						stat.chargerIds = append(stat.chargerIds, parseuint(field))
@@ -86,37 +88,38 @@ func UptimeReport(filename string) {
 			line = strings.TrimSpace(line)
 		}
 
-		for _, stat := range stats {
-			fmt.Printf("Station Id: %v, Chargers in Station: %v \n", stat.stationId, stat.chargerIds)
-		}
+		// for _, stat := range stats {
+		// 	fmt.Printf("Station Id: %v, Chargers in Station: %v \n", stat.stationId, stat.chargerIds)
+		// }
 
 		for check(err) {
 			if strings.TrimSpace(line) == availReportHeader {
-				fmt.Println("printing charger reads: ")
+				//fmt.Println("printing charger reads: ")
 			} else {
 				fields := strings.Fields(line)
-				if len(fields) == 3 || (len(fields) == 4 && fields[3] == "true") {
+				if len(fields) == 4 {
+					stat := stats[chargeMap[parseuint(fields[0])]]
 					//will modifying this stat modify the one in the map?
 					//it does not
-					stat := stats[chargeMap[parseuint(fields[0])]]
-					stat.uptime = append(stat.uptime, [2]uint{parseuint(fields[1]), parseuint(fields[2])})
+					parseChargeLines(parseuint(fields[1]), parseuint(fields[2]), &stat, fields[3])
 					stats[stat.stationId] = stat
+
 				}
 
-				fmt.Println(line)
+				//fmt.Println(line)
 			}
 			line, err = reader.ReadString('\n')
 			line = strings.TrimSpace(line)
 		}
-		fmt.Println(err)
+		//fmt.Println(err)
 
 		if err.Error() == "EOF" {
 			fields := strings.Fields(line)
-			if len(fields) == 3 || (len(fields) == 4 && fields[3] == "true") {
+			if len(fields) == 4 {
+				stat := stats[chargeMap[parseuint(fields[0])]]
 				//will modifying this stat modify the one in the map?
 				//it does not
-				stat := stats[chargeMap[parseuint(fields[0])]]
-				stat.uptime = append(stat.uptime, [2]uint{parseuint(fields[1]), parseuint(fields[2])})
+				parseChargeLines(parseuint(fields[1]), parseuint(fields[2]), &stat, fields[3])
 				stats[stat.stationId] = stat
 			}
 		}
@@ -132,16 +135,36 @@ func UptimeReport(filename string) {
 		//sort stations
 		slices.SortFunc(statsSlice, sortStation)
 		for _, stat := range statsSlice {
-			fmt.Printf("The uptimes for station : %v are: %v   length of uptime slice is: %v\n", stat.stationId, stat.uptime, len(stat.uptime))
+			//fmt.Printf("The uptimes for station : %v are: %v   length of uptime slice is: %v\n", stat.stationId, stat.uptime, len(stat.uptime))
+			calcUptimePercent(stat)
 		}
 
 		//line, err = reader.ReadString('\n')
 	}
 }
 
+func parseChargeLines(start uint, end uint, stat *Station, isUptime string) {
+	//will modifying this stat modify the one in the map?
+	//it does not
+	if isUptime == "true" {
+		stat.uptime = append(stat.uptime, [2]uint{start, end})
+
+	}
+	if !stat.minSet {
+		stat.min = start
+		stat.minSet = true
+	} else if stat.min > start {
+		stat.min = start
+	}
+	if stat.max < end {
+		stat.max = end
+	}
+}
+
 func mergeUptimes(stat *Station) {
 	L, R := 0, 1
 	uptime := stat.uptime
+
 	if len(uptime) > 1 {
 		for len(uptime) > 1 && R < len(uptime) {
 			if uptime[L][0] == uptime[R][0] {
@@ -162,4 +185,33 @@ func mergeUptimes(stat *Station) {
 			}
 		}
 	}
+	stat.uptime = uptime
+
+}
+
+func calcUptimePercent(stat Station) {
+	if len(stat.uptime) == 0 {
+		fmt.Printf("%v %v\n", stat.stationId, 0)
+	}
+
+	if len(stat.uptime) > 0 {
+		uptime := stat.uptime
+		min := stat.min
+		max := stat.max
+		// fmt.Printf("the min time is: %v and the max time is: %v\n", min, max)
+		//setting downtime to the entire time period
+		downtime := max - min
+		for _, times := range uptime {
+			// fmt.Printf("downtime: %v\n ", downtime)
+			//subtracting periods of uptime from downtime
+			downtime = downtime - (times[1] - times[0])
+		}
+		// fmt.Printf("downtime: %v\n ", downtime)
+		total := float64(max - min)
+		percent := 100 - 100*(float64(downtime)/total)
+
+		//fmt.Printf("min: %v max: %v total: %v  downtime: %v  downtime percent: %v\n", min, max, total, downtime, float64(downtime)/total)
+		fmt.Printf("%v %v\n", stat.stationId, math.Trunc(percent))
+	}
+
 }
