@@ -1,0 +1,18 @@
+1. collect charge uptimes to stations
+2. sort charge times -- get min and max during this -- min and max may be in the same charger uptime
+3. 'merge' uptimes 
+    cases:
+    if they both have the same start time, erase the one with the lower end time-- with how I am sorting them, i can always delete the first of two when comparing
+    else if they over lap, take the lower 0-index and higher 1-index
+
+    POTENTIAL PROBLEM: deleting an element of a slice just 'zeroes it out'.  Does it also move them to the end of the slice? or will i have to check each element after to find the true gaps?
+    It turns out it WAS deleting the entries in the slice, but the size and capacity of the original slice were not affected because I was using the reference of the station, but a copy of the slice
+
+4. find gaps and accumulate them
+5. max - min - gaps = total uptime
+6. percent uptime = total uptime/max-min
+
+7. What if there are downtime reads outside the uptime bounds? do we count that as part of the total time?
+
+
+"/Users/uglygrayduck/Dev/charger-uptime/charger-uptime-challenge/the task/input_1.txt"
