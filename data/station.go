@@ -12,6 +12,7 @@ import (
 )
 
 // honestly could just be a map of station ids and uptimes, but putting it in a type helps me organize it in my head a little better
+// added the min and max and minset after above comment.  Probably a better way to do this, but it works.
 type Station struct {
 	stationId  uint
 	chargerIds []uint
@@ -24,37 +25,20 @@ type Station struct {
 const (
 	stationsHeader    = "[Stations]"
 	availReportHeader = "[Charger Availability Reports]"
+	ERROR             = "ERROR"
+	EOF               = "EOF"
 )
 
-func check(err error) bool {
-	return err == nil
-}
-
-func parseuint(s string) uint {
-	num, err := strconv.ParseUint(s, 10, 32)
-	if err != nil {
-		panic(err)
-	}
-	return uint(num)
-}
-
-func sortCharge(a, b [2]uint) int {
-	if n := cmp.Compare(a[0], b[0]); n != 0 {
-		return n
-	}
-
-	return cmp.Compare(a[1], b[1])
-}
-
-func sortStation(a, b Station) int {
-	return cmp.Compare(a.stationId, b.stationId)
-}
 func UptimeReport(filename string) {
+
 	fs, err := os.Open(filename)
-	if err == nil {
-		// fmt.Println("File opened")
+	var reader *bufio.Reader
+	if check(err) {
+		reader = bufio.NewReader(fs)
+	} else {
+		fmt.Println(ERROR)
+		os.Exit(0)
 	}
-	reader := bufio.NewReader(fs)
 	// start read of file line by line
 	for line, err := reader.ReadString('\n'); check(err); {
 		//map of Stations, keys are the station id
@@ -71,11 +55,11 @@ func UptimeReport(filename string) {
 				var statId uint
 				for i, field := range fields {
 					if i == 0 {
-						statId = parseuint(field)
+						statId = parseid(field)
 						stat.stationId = statId
 					} else {
-						chargeMap[parseuint(field)] = statId
-						stat.chargerIds = append(stat.chargerIds, parseuint(field))
+						chargeMap[parseid(field)] = statId
+						stat.chargerIds = append(stat.chargerIds, parseid(field))
 					}
 
 					///fmt.Println(field)
@@ -98,12 +82,16 @@ func UptimeReport(filename string) {
 			} else {
 				fields := strings.Fields(line)
 				if len(fields) == 4 {
-					stat := stats[chargeMap[parseuint(fields[0])]]
+					stat := stats[chargeMap[parseid(fields[0])]]
 					//will modifying this stat modify the one in the map?
 					//it does not
-					parseChargeLines(parseuint(fields[1]), parseuint(fields[2]), &stat, fields[3])
+					parseChargeLines(parsereads(fields[1]), parsereads(fields[2]), &stat, fields[3])
 					stats[stat.stationId] = stat
 
+				} else if len(fields) > 0 {
+					fmt.Println(ERROR)
+					//panic(ERROR)
+					os.Exit(0)
 				}
 
 				//fmt.Println(line)
@@ -113,15 +101,23 @@ func UptimeReport(filename string) {
 		}
 		//fmt.Println(err)
 
-		if err.Error() == "EOF" {
+		if err.Error() == EOF {
 			fields := strings.Fields(line)
 			if len(fields) == 4 {
-				stat := stats[chargeMap[parseuint(fields[0])]]
+				stat := stats[chargeMap[parseid(fields[0])]]
 				//will modifying this stat modify the one in the map?
 				//it does not
-				parseChargeLines(parseuint(fields[1]), parseuint(fields[2]), &stat, fields[3])
+				parseChargeLines(parsereads(fields[1]), parsereads(fields[2]), &stat, fields[3])
 				stats[stat.stationId] = stat
+			} else if len(fields) > 0 {
+				fmt.Println(ERROR)
+				//panic(ERROR)
+				os.Exit(0)
 			}
+		} else {
+			fmt.Println(ERROR)
+			//panic(ERROR)
+			os.Exit(0)
 		}
 		// create station slice to be sorted
 		statsSlice := []Station{}
@@ -136,7 +132,7 @@ func UptimeReport(filename string) {
 		slices.SortFunc(statsSlice, sortStation)
 		for _, stat := range statsSlice {
 			//fmt.Printf("The uptimes for station : %v are: %v   length of uptime slice is: %v\n", stat.stationId, stat.uptime, len(stat.uptime))
-			calcUptimePercent(stat)
+			fmt.Print(calcUptimePercent(stat))
 		}
 
 		//line, err = reader.ReadString('\n')
@@ -189,11 +185,11 @@ func mergeUptimes(stat *Station) {
 
 }
 
-func calcUptimePercent(stat Station) {
+func calcUptimePercent(stat Station) string {
 	if len(stat.uptime) == 0 {
 		fmt.Printf("%v %v\n", stat.stationId, 0)
 	}
-
+	var ret string
 	if len(stat.uptime) > 0 {
 		uptime := stat.uptime
 		min := stat.min
@@ -211,7 +207,42 @@ func calcUptimePercent(stat Station) {
 		percent := 100 - 100*(float64(downtime)/total)
 
 		//fmt.Printf("min: %v max: %v total: %v  downtime: %v  downtime percent: %v\n", min, max, total, downtime, float64(downtime)/total)
-		fmt.Printf("%v %v\n", stat.stationId, math.Trunc(percent))
+		ret = fmt.Sprintf("%v %v\n", stat.stationId, math.Trunc(percent))
+
+	}
+	return ret
+}
+
+func check(err error) bool {
+	return err == nil
+}
+
+func parseuint(s string, bitsize int) uint {
+	s = strings.ReplaceAll(s, ",", "")
+	num, err := strconv.ParseUint(s, 10, bitsize)
+	if err != nil {
+		fmt.Println(ERROR)
+		//panic(err)
+		os.Exit(0)
+	}
+	return uint(num)
+}
+
+func parseid(s string) uint {
+	return parseuint(s, 32)
+}
+func parsereads(s string) uint {
+	return parseuint(s, 64)
+}
+
+func sortCharge(a, b [2]uint) int {
+	if n := cmp.Compare(a[0], b[0]); n != 0 {
+		return n
 	}
 
+	return cmp.Compare(a[1], b[1])
+}
+
+func sortStation(a, b Station) int {
+	return cmp.Compare(a.stationId, b.stationId)
 }
